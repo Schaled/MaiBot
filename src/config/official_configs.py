@@ -6078,7 +6078,7 @@ class PluginRuntimeConfig(ConfigBase):
     """等待插件 Runner 启动完成的最长时间。"""
 
     hook_blocking_timeout_sec: float = Field(
-        default=60,
+        default=15,
         json_schema_extra={
             "label": {
                 "zh_CN": "阻塞 Hook 超时秒数",

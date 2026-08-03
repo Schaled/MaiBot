@@ -360,7 +360,8 @@ class LLMOrchestrator:
         time_cost = time.time() - start_time
         self._check_slow_request(time_cost, model_info.name)
         if usage := response.usage:
-            llm_usage_recorder.record_usage_to_database(
+            await asyncio.to_thread(
+                llm_usage_recorder.record_usage_to_database,
                 model_info=model_info,
                 model_usage=usage,
                 user_id="system",
@@ -461,7 +462,8 @@ class LLMOrchestrator:
             content, extracted_reasoning = self._extract_reasoning(content)
             reasoning_content = extracted_reasoning
         if usage := response.usage:
-            llm_usage_recorder.record_usage_to_database(
+            await asyncio.to_thread(
+                llm_usage_recorder.record_usage_to_database,
                 model_info=model_info,
                 model_usage=usage,
                 user_id="system",
@@ -537,7 +539,8 @@ class LLMOrchestrator:
             reasoning_content = extracted_reasoning
         self._check_slow_request(time_cost, model_info.name)
         if usage := response.usage:
-            llm_usage_recorder.record_usage_to_database(
+            await asyncio.to_thread(
+                llm_usage_recorder.record_usage_to_database,
                 model_info=model_info,
                 model_usage=usage,
                 user_id="system",
@@ -575,7 +578,8 @@ class LLMOrchestrator:
         model_info = execution_result.model_info
         embedding = response.embedding
         if usage := response.usage:
-            llm_usage_recorder.record_usage_to_database(
+            await asyncio.to_thread(
+                llm_usage_recorder.record_usage_to_database,
                 model_info=model_info,
                 model_usage=usage,
                 user_id="system",

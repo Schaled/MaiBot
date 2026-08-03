@@ -43,7 +43,7 @@ def set_sqlite_pragma(dbapi_connection: "SQLite3Connection", connection_record):
     cursor.execute("PRAGMA cache_size=-64000")  # 负值表示KB,64000KB = 64MB
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA busy_timeout=1000")  # 1秒超时
+    cursor.execute("PRAGMA busy_timeout=5000")  # 5秒超时，避免多线程写竞争导致事件循环阻塞后立即失败
     cursor.close()
 
 
