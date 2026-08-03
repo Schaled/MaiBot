@@ -9,6 +9,10 @@
 - 提高 SQLite `busy_timeout` 至 5 秒，避免多线程写竞争时事件循环线程立即失败。
 - 降低阻塞 Hook 默认超时从 60s 至 15s，避免 Runner 阻塞时 LLM 请求空等。
 
+## A_Memorix
+
+- 修复记忆调优场景下大量 LLM Timeout 的根本原因：A_Memorix 检索器（`DualPathRetriever`）的 FAISS 向量检索、SQLite 元数据查询、BM25 稀疏检索、图存储检索等同步操作在事件循环线程中执行，阻塞了所有并发的 httpx 请求。将这些同步操作全部改为 `asyncio.to_thread` 线程池执行，消除事件循环阻塞。
+
 # [1.1.4] - 2026-8-2
 
 ## 主程序

@@ -420,7 +420,7 @@ class DualPathRetriever:
         )
 
         if temporal and not (query or "").strip():
-            return self._retrieve_temporal_only(temporal, top_k)
+            return await asyncio.to_thread(self._retrieve_temporal_only, temporal, top_k)
 
         # 根据策略执行检索
         if strategy == RetrievalStrategy.PARA_ONLY:
@@ -1018,7 +1018,7 @@ class DualPathRetriever:
             检索结果列表
         """
         if self._is_sparse_only_runtime():
-            sparse_results = self._search_paragraphs_sparse(query, top_k, temporal=temporal)
+            sparse_results = await asyncio.to_thread(self._search_paragraphs_sparse, query, top_k, temporal=temporal)
             return sparse_results[:top_k]
 
         query_emb = None
@@ -1037,11 +1037,13 @@ class DualPathRetriever:
         if embedding_ok:
             multiplier = max(1, temporal.candidate_multiplier) if temporal else 1
             candidate_k = self._cap_temporal_scan_k(top_k * 2 * multiplier, temporal)
-            para_ids, para_scores = self.vector_store.search(
+            para_ids, para_scores = await asyncio.to_thread(
+                self.vector_store.search,
                 query_emb,  # type: ignore[arg-type]
                 k=candidate_k,
             )
-            vector_results = self._build_paragraph_results_from_ids(
+            vector_results = await asyncio.to_thread(
+                self._build_paragraph_results_from_ids,
                 list(para_ids),
                 [float(score) for score in para_scores],
                 source="paragraph_search",
@@ -1050,7 +1052,7 @@ class DualPathRetriever:
 
         sparse_results: List[RetrievalResult] = []
         if self._should_use_sparse(embedding_ok, vector_results):
-            sparse_results = self._search_paragraphs_sparse(query, top_k, temporal=temporal)
+            sparse_results = await asyncio.to_thread(self._search_paragraphs_sparse, query, top_k, temporal=temporal)
 
         if self.config.fusion.method == "weighted_rrf" and (vector_results and sparse_results):
             results = self._fuse_ranked_lists_weighted_rrf(vector_results, sparse_results)
@@ -1084,8 +1086,8 @@ class DualPathRetriever:
             检索结果列表
         """
         if self._is_sparse_only_runtime():
-            sparse_results = self._search_relations_sparse(query=query, top_k=top_k, temporal=temporal)
-            graph_results = self._search_relations_graph(query=query, temporal=temporal)
+            sparse_results = await asyncio.to_thread(self._search_relations_sparse, query=query, top_k=top_k, temporal=temporal)
+            graph_results = await asyncio.to_thread(self._search_relations_graph, query=query, temporal=temporal)
             if graph_results:
                 merged = self._merge_relation_results_graph_enhanced(
                     [],
@@ -1111,13 +1113,14 @@ class DualPathRetriever:
             # 1. 检索向量 (混合了段落和实体，所以扩大检索范围以召回足够多实体)
             multiplier = max(1, temporal.candidate_multiplier) if temporal else 1
             candidate_k = self._cap_temporal_scan_k(top_k * 3 * multiplier, temporal)
-            ids, scores = self.vector_store.search(
+            ids, scores = await asyncio.to_thread(
+                self.vector_store.search,
                 query_emb,  # type: ignore[arg-type]
                 k=candidate_k,
             )
 
             seen_relations = set()
-            entity_map = self.metadata_store.get_entities_by_hashes(ids)
+            entity_map = await asyncio.to_thread(self.metadata_store.get_entities_by_hashes, ids)
             relation_scores: Dict[str, float] = {}
             relation_pivots: Dict[str, str] = {}
             for hash_value, score in zip(ids, scores, strict=False):
@@ -1127,8 +1130,8 @@ class DualPathRetriever:
                 entity_name = entity["name"]
 
                 related_rels = []
-                related_rels.extend(self.metadata_store.get_relations(subject=entity_name, include_inactive=False))
-                related_rels.extend(self.metadata_store.get_relations(object=entity_name, include_inactive=False))
+                related_rels.extend(await asyncio.to_thread(self.metadata_store.get_relations, subject=entity_name, include_inactive=False))
+                related_rels.extend(await asyncio.to_thread(self.metadata_store.get_relations, object=entity_name, include_inactive=False))
 
                 for rel in related_rels:
                     if rel["hash"] in seen_relations:
@@ -1137,7 +1140,8 @@ class DualPathRetriever:
                     relation_scores[rel["hash"]] = float(score)
                     relation_pivots[rel["hash"]] = str(entity_name)
 
-            vector_results = self._build_relation_results_from_ids(
+            vector_results = await asyncio.to_thread(
+                self._build_relation_results_from_ids,
                 list(relation_scores.keys()),
                 list(relation_scores.values()),
                 source="relation_search (via entity)",
@@ -1149,9 +1153,9 @@ class DualPathRetriever:
 
         sparse_results: List[RetrievalResult] = []
         if self._should_use_sparse_relations(embedding_ok, vector_results):
-            sparse_results = self._search_relations_sparse(query=query, top_k=top_k, temporal=temporal)
+            sparse_results = await asyncio.to_thread(self._search_relations_sparse, query=query, top_k=top_k, temporal=temporal)
 
-        graph_results = self._search_relations_graph(query=query, temporal=temporal)
+        graph_results = await asyncio.to_thread(self._search_relations_graph, query=query, temporal=temporal)
         if graph_results:
             results = self._merge_relation_results_graph_enhanced(
                 vector_results,
@@ -1217,12 +1221,14 @@ class DualPathRetriever:
         alpha_override = relation_intent.get("alpha_override")
 
         if self._is_sparse_only_runtime():
-            para_results = self._search_paragraphs_sparse(
+            para_results = await asyncio.to_thread(
+                self._search_paragraphs_sparse,
                 query=query,
                 top_k=max(top_k * 2, self.config.sparse.candidate_k),
                 temporal=temporal,
             )
-            sparse_rel_results = self._search_relations_sparse(
+            sparse_rel_results = await asyncio.to_thread(
+                self._search_relations_sparse,
                 query=query,
                 top_k=max(
                     top_k,
@@ -1233,7 +1239,7 @@ class DualPathRetriever:
             )
             graph_rel_results: List[RetrievalResult] = []
             if bool(relation_intent.get("enabled", False)):
-                graph_rel_results = self._search_relations_graph(query=query, temporal=temporal)
+                graph_rel_results = await asyncio.to_thread(self._search_relations_graph, query=query, temporal=temporal)
             if graph_rel_results:
                 rel_results = self._merge_relation_results_graph_enhanced(
                     [],
@@ -1257,7 +1263,8 @@ class DualPathRetriever:
                 )
             if temporal:
                 fused_results = self._sort_results_with_temporal(fused_results, temporal)
-            fused_results = apply_posterior_graph_gate(
+            fused_results = await asyncio.to_thread(
+                apply_posterior_graph_gate,
                 self,
                 query=query,
                 base_results=fused_results,
@@ -1293,17 +1300,19 @@ class DualPathRetriever:
                     relation_top_k=relation_top_k,
                 )  # type: ignore[arg-type]
             else:
-                para_results, rel_results = self._sequential_retrieve(
+                para_results, rel_results = await asyncio.to_thread(
+                    self._sequential_retrieve,
                     query_emb,
-                    temporal=temporal,
-                    relation_top_k=relation_top_k,
+                    temporal,
+                    relation_top_k,
                 )  # type: ignore[arg-type]
         else:
             logger.warning("embedding 不可用，跳过向量段落/关系召回")
 
         sparse_para_results: List[RetrievalResult] = []
         if self._should_use_sparse(embedding_ok, para_results):
-            sparse_para_results = self._search_paragraphs_sparse(
+            sparse_para_results = await asyncio.to_thread(
+                self._search_paragraphs_sparse,
                 query=query,
                 top_k=max(top_k * 2, self.config.sparse.candidate_k),
                 temporal=temporal,
@@ -1314,7 +1323,8 @@ class DualPathRetriever:
             rel_results,
             force_enable=force_relation_sparse,
         ):
-            sparse_rel_results = self._search_relations_sparse(
+            sparse_rel_results = await asyncio.to_thread(
+                self._search_relations_sparse,
                 query=query,
                 top_k=max(
                     top_k,
@@ -1326,7 +1336,7 @@ class DualPathRetriever:
 
         graph_rel_results: List[RetrievalResult] = []
         if bool(relation_intent.get("enabled", False)):
-            graph_rel_results = self._search_relations_graph(query=query, temporal=temporal)
+            graph_rel_results = await asyncio.to_thread(self._search_relations_graph, query=query, temporal=temporal)
 
         if self.config.fusion.method == "weighted_rrf" and para_results and sparse_para_results:
             para_results = self._fuse_ranked_lists_weighted_rrf(para_results, sparse_para_results)
@@ -1366,7 +1376,8 @@ class DualPathRetriever:
         if temporal:
             fused_results = self._sort_results_with_temporal(fused_results, temporal)
 
-        fused_results = apply_posterior_graph_gate(
+        fused_results = await asyncio.to_thread(
+            apply_posterior_graph_gate,
             self,
             query=query,
             base_results=fused_results,
@@ -1838,21 +1849,27 @@ class DualPathRetriever:
                 entity_hashes.append(hash_value)
         normalized_items = self._normalize_graph_scores_by_type(parsed_items)
 
-        relation_rows = self.metadata_store.get_relations_by_hashes(
-            relation_hashes,
-            include_inactive=False,
+        def _fetch_graph_metadata():
+            rel_rows = self.metadata_store.get_relations_by_hashes(
+                relation_hashes,
+                include_inactive=False,
+            )
+            ent_rows = self.metadata_store.get_entities_by_hashes(entity_hashes)
+            rel_paragraphs = self.metadata_store.get_paragraphs_by_relation_hashes(relation_hashes)
+            ent_paragraphs_getter = getattr(
+                self.metadata_store,
+                "get_paragraphs_by_entity_hashes",
+                None,
+            )
+            if callable(ent_paragraphs_getter):
+                ent_paragraphs = ent_paragraphs_getter(entity_hashes)
+            else:
+                ent_paragraphs = {}
+            return rel_rows, ent_rows, rel_paragraphs, ent_paragraphs
+
+        relation_rows, entity_rows, relation_paragraphs, entity_paragraphs = await asyncio.to_thread(
+            _fetch_graph_metadata
         )
-        entity_rows = self.metadata_store.get_entities_by_hashes(entity_hashes)
-        relation_paragraphs = self.metadata_store.get_paragraphs_by_relation_hashes(relation_hashes)
-        entity_paragraphs_getter = getattr(
-            self.metadata_store,
-            "get_paragraphs_by_entity_hashes",
-            None,
-        )
-        if callable(entity_paragraphs_getter):
-            entity_paragraphs = entity_paragraphs_getter(entity_hashes)
-        else:
-            entity_paragraphs = {}
 
         expanded_entries: List[Tuple[float, int, Dict[str, Any], Dict[str, Any]]] = []
         for item_index, (item_type, hash_value, raw_score, normalized_score) in enumerate(normalized_items):
@@ -1950,7 +1967,7 @@ class DualPathRetriever:
                 query_emb,
                 k=paragraph_top_k,
             )
-            paragraph_map = self.metadata_store.get_paragraphs_by_hashes(para_ids)
+            paragraph_map = await asyncio.to_thread(self.metadata_store.get_paragraphs_by_hashes, para_ids)
             for hash_value, score in zip(para_ids, para_scores, strict=False):
                 paragraph = paragraph_map.get(hash_value)
                 if paragraph is None:
@@ -1990,7 +2007,8 @@ class DualPathRetriever:
 
         sparse_para_results: List[RetrievalResult] = []
         if self._should_use_sparse(embedding_ok, list(candidates.values())):
-            sparse_para_results = self._search_paragraphs_sparse(
+            sparse_para_results = await asyncio.to_thread(
+                self._search_paragraphs_sparse,
                 query=query,
                 top_k=max(top_k * 2, self.config.sparse.candidate_k),
                 temporal=temporal,
@@ -2102,7 +2120,8 @@ class DualPathRetriever:
         if temporal:
             results = self._sort_results_with_temporal(results, temporal)
 
-        results = apply_posterior_graph_gate(
+        results = await asyncio.to_thread(
+            apply_posterior_graph_gate,
             self,
             query=query,
             base_results=results,
@@ -2461,8 +2480,9 @@ class DualPathRetriever:
 
         # 调整结果分数
         ppr_scores_by_name = {str(name).strip().lower(): float(score) for name, score in ppr_scores.items()}
-        paragraph_entity_map = self.metadata_store.get_paragraph_entities_by_hashes(
-            [result.hash_value for result in results if result.result_type == "paragraph"]
+        paragraph_entity_map = await asyncio.to_thread(
+            self.metadata_store.get_paragraph_entities_by_hashes,
+            [result.hash_value for result in results if result.result_type == "paragraph"],
         )
         for result in results:
             if result.result_type == "paragraph":
